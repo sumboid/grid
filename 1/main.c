@@ -8,6 +8,13 @@
 #define PORT_FILE "current-port"
 #define MINUTE 60
 #define START_THREAD(x) pthread_t x##_thread; pthread_create(&x##_thread, NULL, x, NULL)
+#define PRINT_COMM(x) do { \
+														char name[MPI_MAX_OBJECT_NAME]; \
+														int len; \
+														MPI_Comm_get_name(x, name, &len); \
+														name[len] = 0; \
+														printf("%s\n", name); fflush(stdout); \
+											} while(0)
 
 typedef enum {
 	CONNECT,
@@ -71,27 +78,29 @@ int main(int argc, char *argv[])
 	init_state(argc, argv);
 	printf("%d: Init ready!\n", state->rank); fflush(stdout);
 	if(state->rank == 0) sleeptime = 1 * MINUTE;
-
 	setup();
 	printf("%d: Setup ready!\n", state->rank); fflush(stdout);
-
+	
+	PRINT_COMM(state->comm);
+	
 	START_THREAD(listener);
 	START_THREAD(balancer);
-	pthread_detach(listener_thread);
-	pthread_detach(listener_thread);
-	// while(1) {
-	// 	if(sleeptime == 0) {
-	// 		//printf("%d: I wanna sleep!\n", state->rank); fflush(stdout);
-	// 		if(!wannasleep_sended) { bcast(WANNA_SLEEP); wannasleep_sended = 1; }
-	// 		if(empty == state->size - 1) break; //Nothing to do
-	// 		sleep(1);
-	// 		continue;
-	// 	}
-	// 	wannasleep_sended = 0;
 
-	// 	change_sleeptime(-1);
-	// 	sleep(sleepfragment);
-	// }
+	while(1) {
+		if(sleeptime == 0) {
+			
+			if(!wannasleep_sended) { bcast(WANNA_SLEEP); wannasleep_sended = 1; }
+			if(empty == state->size - 1) break; //Nothing to do
+			sleep(1);
+			continue;
+		}
+		printf("%d: Zzz\n", state->rank); fflush(stdout);
+		wannasleep_sended = 0;
+
+		change_sleeptime(-1);
+		sleep(sleepfragment);
+	}
+
 	sleep(60);
 	printf("Ready! Please send SIGKILL."); fflush(stdout);
 	MPI_Finalize();
@@ -104,6 +113,7 @@ static void init_state(int argc, char** argv) {
 	if(MPI_SUCCESS != MPI_Init_thread(&argc, &argv, required, &provided)) {
 		printf(":(\n"); fflush(stdout);
 	}
+	if(provided != required) { printf("Provided = %d\n", provided); exit(1); }
 
 	state = calloc(1, sizeof(mpi_state_t));
 	update_state(MPI_COMM_WORLD, 1, 0, 1, 0, 0);
@@ -114,7 +124,7 @@ static void setup() {
 		if(!port_file_exist()) {
 			publish_name(); 
 			bcast(GET_PORT);
-			update_state(MPI_COMM_NULL, 0, 1, 1, 1, 1);
+			update_state(MPI_COMM_WORLD, 0, 1, 1, 1, 1);
 		}
 		else {
 			bcast(CONNECT);
@@ -123,7 +133,7 @@ static void setup() {
 	} else {
 		message m = recv_message().m;
 		if(m == CONNECT) connect();
-		else if(m == GET_PORT) { read_port(); update_state(MPI_COMM_NULL, 0, 1, 1, 0, 0); }
+		else if(m == GET_PORT) { read_port(); update_state(MPI_COMM_WORLD, 0, 1, 1, 0, 0); }
 	}	
 }
 
@@ -131,7 +141,7 @@ static void bcast(message m) {
 	int im = m;
 	for(int i = 0; i < state->size; ++i) {
 		if(state->rank == i) continue;
-		MPI_Ssend(&m, 1, MPI_INTEGER,
+		MPI_Send(&m, 1, MPI_INT,
 						 i, state->rank, state->comm);
 		}
 }
@@ -163,12 +173,12 @@ static void* listener() {
 	while(1) {
 		MPI_Comm newcomm;
 		MPI_Comm tmpcomm;
-		update_state(MPI_COMM_NULL, 0, 0, 0, 1, 1);
+
 		MPI_Comm_accept(mpi_port, MPI_INFO_NULL, 0, state->comm, &tmpcomm);
 		newcomm = merge(tmpcomm);
 		if(state->rank == 0) republish_name();
 		update_state(newcomm, 1, 0, 0, 0, 0);
-		printf("----------\nSuccessfully merged!\nrank = %d\nsize = %d\n", state->rank, state->size);
+		printf("----------\nSuccessfully merged!\nrank = %d\nsize = %d\n", state->rank, state->size); fflush(stdout);
 	}
 }
 
@@ -203,15 +213,15 @@ static void update_state(MPI_Comm comm, int update_comm,
 						 int worker, int update_worker,
 						 int can_give, int update_can_give) {
 	pthread_mutex_lock(&state_mutex);
-	if(update_comm) {
+	if(update_comm != 0) {
 		state->comm = comm;
 		if(state->size == 0) state->oldsize = 1;
 		else state->oldsize = state->size;
 		MPI_Comm_rank(comm, &state->rank);
 		MPI_Comm_size(comm, &state->size);	
 	}
-	if(update_worker) state->worker = worker;
-	if(update_can_give) state->can_give = can_give;
+	if(update_worker != 0) state->worker = worker;
+	if(update_can_give != 0) state->can_give = can_give;
 	pthread_mutex_unlock(&state_mutex);
 }
 
@@ -219,16 +229,17 @@ static void* balancer() {
 	while(1) {
 		printf("%d: Waiting for new message.\n", state->rank); fflush(stdout);
 		message_t mes = recv_message();
+		printf("%d: Recieved some message. \n", state->rank); fflush(stdout);
 		switch(mes.m) {
 			case WANNA_SLEEP: give_time(mes.rank); break;
 			case INCOMING: get_time(mes.rank); break;
-			default: printf("not cool\n"); break;
+			default: printf("not cool\n"); fflush(stdout); break;
 		}
 	}
 }
 
 static void give_time(int rank) {
-	printf("%d: Recieved WANNA_SLEEP message\n", state->rank); fflush(stdout);
+	//printf("%d: Recieved WANNA_SLEEP message\n", state->rank); fflush(stdout);
 	if(!state->can_give) return;
 	if(sleeptime == 0) {
 		empty++;
@@ -236,37 +247,42 @@ static void give_time(int rank) {
 	}
 	
 	empty = 0;
-	int fragments = (sleeptime / sleepfragment) * state->oldsize / state->size;
+	int fragments = (sleeptime / sleepfragment) / (state->size - state->oldsize + 1);
 	
+	printf("%d: Send INCOMING to %d \n", state->rank, rank); fflush(stdout);
 	send_message(rank, INCOMING);
 	send_time(rank, fragments);
 }
 
 static void send_message(int rank, message m) {
 	int im = m;
-	MPI_Ssend(&im, 1, MPI_INTEGER, rank, state->rank, state->comm);
+	MPI_Ssend(&im, 1, MPI_INT, rank, state->rank, state->comm);
 }
 
 static void send_time(int rank, int fragments) {
 	change_sleeptime(-fragments);
-	MPI_Ssend(&fragments, 1, MPI_INTEGER, rank, state->rank, state->comm);
+	printf("%d: Start sending fragments to %d\n", state->rank, rank); fflush(stdout);
+	MPI_Ssend(&fragments, 1, MPI_INT, rank, state->rank, state->comm);
+	printf("%d: Fragments sended to %d\n", state->rank, rank); fflush(stdout);
 }
 
 static void get_time(int rank) {
 	printf("%d: Recieved INCOMING message\n", state->rank); fflush(stdout);
 	int fragments = recv_fragments(rank);
+	printf("%d: Get %d fragments\n", state->rank, fragments); fflush(stdout);
 	change_sleeptime(fragments);
 }
 
 static int recv_fragments(int rank) {
 	int f;
-	MPI_Recv(&f, 1, MPI_INT, rank, rank, state->comm, NULL);
+	printf("%d: Get fragments from %d\n", state->rank, rank); fflush(stdout);
+	MPI_Recv(&f, 1, MPI_INT, rank, rank, state->comm, MPI_STATUS_IGNORE);
 	return f;
 }
 
 static void change_sleeptime(int size) {
 	pthread_mutex_lock(&sleep_mutex);
-	printf("%d: Added %d time\n", state->rank, size * sleepfragment); fflush(stdout);
+	//printf("%d: Added %d time\n", state->rank, size * sleepfragment); fflush(stdout);
 	sleeptime += size * sleepfragment;
 	pthread_mutex_unlock(&sleep_mutex);
 }
