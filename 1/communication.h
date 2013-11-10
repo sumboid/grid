@@ -4,5 +4,8 @@
 #include "types.h"
 #include "global.h"
 
-void mpi_send(int message, int tag, int to);
-message_t mpi_recv(int tag, int from);
+void bcast(message m);
+message_t recv_message();
+void send_message(int rank, message m);
+void send_fragments(int rank, int fragments);
+int recv_fragments(int rank);

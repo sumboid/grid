@@ -5,7 +5,9 @@ typedef enum {
 	CONNECT,
 	GET_PORT,
 	WANNA_SLEEP,
-	INCOMING
+    SLEEP,
+	INCOMING,
+    END
 } message;
 
 enum {
@@ -18,13 +20,4 @@ typedef struct {
 	message m;
 } message_t;
 
-typedef struct {
-	MPI_Comm comm;
-	int rank;
-	int size;
-	int oldsize;
-	int worker;
-	int can_give;
 
-  pthread_mutex_t mcomm;
-} mpi_state_t;

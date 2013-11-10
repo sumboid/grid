@@ -5,6 +5,8 @@
 #include <stdio.h>
 
 #include "types.h"
+#include "compl.h"
+#include "state.h"
 
 extern mpi_state_t* state;
 
@@ -16,3 +18,8 @@ extern int sleeptime;
 extern int sleepfragment;
 extern int empty;
 extern int wannasleep_sended;
+
+extern compl_t* completeness;
+
+extern int end;
+extern pthread_mutex_t mend;
