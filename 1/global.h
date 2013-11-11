@@ -23,3 +23,6 @@ extern compl_t* completeness;
 
 extern int end;
 extern pthread_mutex_t mend;
+
+extern int listener_stopped;
+extern pthread_mutex_t mlistener_stopped;

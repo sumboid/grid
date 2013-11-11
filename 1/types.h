@@ -2,22 +2,23 @@
 #include <pthread.h>
 
 typedef enum {
-	CONNECT,
-	GET_PORT,
-	WANNA_SLEEP,
+    CONNECT,
+    GET_PORT,
+    WANNA_SLEEP,
     SLEEP,
-	INCOMING,
+    COMPLETE,
+    INCOMING,
     END
 } message;
 
 enum {
-	MESSAGE,
-	JOB
+    MESSAGE,
+    JOB
 };
 
 typedef struct {
-	int rank;
-	message m;
+    int rank;
+    message m;
 } message_t;
 
 

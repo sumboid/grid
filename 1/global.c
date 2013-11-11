@@ -21,3 +21,6 @@ compl_t* completeness;
 
 int end = 0;
 pthread_mutex_t mend = PTHREAD_MUTEX_INITIALIZER;
+
+int listener_stopped = 0;
+pthread_mutex_t mlistener_stopped = PTHREAD_MUTEX_INITIALIZER;

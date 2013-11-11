@@ -27,6 +27,7 @@ static void give_time(int rank);
 static void sleep_notify(int rank);
 static void get_time(int rank);
 static void change_sleeptime(int size);
+static void selfconnect();
 
 int main(int argc, char *argv[])
 {
@@ -39,7 +40,7 @@ int main(int argc, char *argv[])
     while(1) {
         if(sleeptime == 0) {
             if(!wannasleep_sended) { bcast(WANNA_SLEEP); wannasleep_sended = 1; }
-            if(compl_check(completeness)) { bcast(WANNA_SLEEP); break; } //Nothing to do
+            if(compl_check(completeness)) { break; } //Nothing to do
 
             sleep(1);
             continue;
@@ -51,19 +52,29 @@ int main(int argc, char *argv[])
         sleep(sleepfragment);
     }
 
-
-    MPI_Barrier(get_comm(state));
     pthread_mutex_lock(&mend); end = 1; pthread_mutex_unlock(&mend);
-
-    MPI_Comm newcomm, tmpcomm;
-    MPI_Group newgroup;
-    MPI_Comm_group(get_comm(state), &newgroup);
-    MPI_Comm_create(get_comm(state), newgroup, &newcomm);
-    MPI_Comm_connect(mpi_port, MPI_INFO_NULL, 0, newcomm, &tmpcomm);
+    bcast(COMPLETE);
+    selfconnect();
     WAIT_THREAD(listener);
     WAIT_THREAD(balancer);
     MPI_Finalize();
     return 0;
+}
+
+static void selfconnect() {
+    pthread_mutex_lock(&mlistener_stopped);
+    if(listener_stopped) {
+        pthread_mutex_unlock(&mlistener_stopped);
+        return;
+    }
+
+    pthread_mutex_unlock(&mlistener_stopped);
+    MPI_Comm oldcomm = get_comm(state);
+    MPI_Comm newcomm, tmpcomm;
+    MPI_Group newgroup;
+    MPI_Comm_group(oldcomm, &newgroup);
+    MPI_Comm_create(oldcomm, newgroup, &newcomm);
+    MPI_Comm_connect(mpi_port, MPI_INFO_NULL, 0, newcomm, &tmpcomm);
 }
 
 static void init_state(int argc, char** argv) {
@@ -120,13 +131,16 @@ static void* listener() {
 
         int err = MPI_Comm_accept(mpi_port, MPI_INFO_NULL, 0, get_comm(state), &tmpcomm);
         if(err != MPI_SUCCESS) printf("Error: %d\n", err);
+
         pthread_mutex_lock(&mend);
         if(end) {
             pthread_mutex_unlock(&mend);
+            pthread_mutex_lock(&mlistener_stopped);
+            listener_stopped = 1;
+            pthread_mutex_unlock(&mlistener_stopped);
             pthread_exit(NULL);
         }
         pthread_mutex_unlock(&mend);
-
 
         newcomm = merge(tmpcomm, 0);
         if(get_rank(state) == 0) republish_name();
@@ -170,7 +184,8 @@ static void* balancer() {
             case WANNA_SLEEP: give_time(mes.rank); break;
             case INCOMING: get_time(mes.rank); break;
             case SLEEP: sleep_notify(mes.rank); break;
-            case END: pthread_exit(NULL);
+            case COMPLETE: compl_set(completeness, mes.rank, 1); break;
+            case END: pthread_exit(NULL); break;
             default: printf("%d: not cool: %d\n", get_rank(state), mes.m); fflush(stdout); break;
         }
     }
